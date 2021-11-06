@@ -12,7 +12,7 @@ vector<vector<double>> k = {
 };
 
 
-vector<vector<double>> a = {
+const vector<vector<double>> a = {
     {},
     {1. / 18}, 
     {1. / 48, 1. / 16}, 
@@ -28,17 +28,19 @@ vector<vector<double>> a = {
     {403863854. / 491063109, 0., 0., -5068492393. / 434740067, -411421997. / 543043805, 652783627. / 914296604, 11173962825. / 925320556, -13158990841. / 6184727034, 3936647629. / 1978049680, -160528059. / 685178525, 248638103. / 1413531060, 0.}
 };
 
-vector<double> c = {
+const vector<double> c = {
     0., 1. / 18, 1. / 12, 1. / 8, 5. / 16, 3. / 8, 59. / 400, 93. / 200, 5490023248. / 9719169821, 13. / 20, 1201146811. / 12990119798, 1., 1.
 };
 
-vector<double> b = {14005451. / 335480064, 0., 0., 0., 0., -59238493. / 1068277825, 181606767. / 758867731, 561292985. / 797845732, -1041891430. / 1371343529, 760417239. / 1151165299, 118820643. / 751138087, -528747749. / 2220607170, 1. / 4};
+const vector<double> b = {
+    14005451. / 335480064, 0., 0., 0., 0., -59238493. / 1068277825, 181606767. / 758867731, 561292985. / 797845732, -1041891430. / 1371343529, 760417239. / 1151165299, 118820643. / 751138087, -528747749. / 2220607170, 1. / 4
+};
 
-vector<double> lowB = {
+const vector<double> lowB = {
     13451932. / 455176623, 0., 0., 0., 0., -808719846. / 976000145, 1757004468. / 5645159321, 656045339. / 265891186, -3867574721. / 1518517206, 465885868. / 322736535, 53011238. / 667516719, 2. / 45, 0.
 };
 
-double tol(1.e-8);
+double tol(1.e-15);
 double fac(0.8);
 double facmin(0.7);
 double facmax(1.5);
@@ -62,7 +64,7 @@ double FindLinearCombinationForA(int matrixIndex, bool var) {
     return lc;
 }
 
-double FindLinearCombinationForSlowB(bool var) {
+double FindLinearCombinationForLowB(bool var) {
     double lc = 0.;
     for (int i = 0; i < lowB.size(); ++i) {
         lc += lowB[i] * k[var][i];
@@ -85,11 +87,12 @@ void FindK(double t, double &y, double &x, double h) {
         k[0][i] = FuncX(t + c[i] * h, y + h * FindLinearCombinationForA(i, 1), x + h * FindLinearCombinationForA(i, 0));
         k[1][i] = FuncY(t + c[i] * h, y + h * FindLinearCombinationForA(i, 1), x + h * FindLinearCombinationForA(i, 0));
     }
-    x += h * FindLinearCombinationForSlowB(0);
-    y += h * FindLinearCombinationForSlowB(1);
+    x += h * FindLinearCombinationForLowB(0);
+    y += h * FindLinearCombinationForLowB(1);
 }
 
-double StepChoice(double t, double &y, double &x, double h) {
+double StepChoice(double t, double &y, double &x, double& currH) {
+    double h = currH;
     for (;;) {
         double locX = x, locY = y, wX = x, wY = y;
         FindK(t, locY, locX, h);
@@ -98,7 +101,8 @@ double StepChoice(double t, double &y, double &x, double h) {
         double d1 = fabs(wX - locX);
         double d2 = fabs(wY - locY);
         double err = max(d1, d2);
-        h *= min(facmax, max(facmin, fac * pow((tol / err), 1. / 6)));
+        currH = h;
+        h *= min(facmax, max(facmin, fac * pow((tol / err), 1. / 9)));
         if (err <= tol) {
             x = locX;
             y = locY;
@@ -114,12 +118,12 @@ int main() {
     out.open("auto_rk.txt");
     for (double T = 0.; T <= 100000 * 3.1415926535897932; T += currH) {
         currH = nextH;
-        if (!(draw % 1)) {
-            out << x << " " << y << endl;
+        if (!(draw % 400)) {
+            out << x - sin(T) << " " << y - cos(T) << endl;
         }
         nextH = StepChoice(T, y, x, currH);
         draw++;
     }
     out.close();
-    
+    return 0;
 }

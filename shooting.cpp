@@ -4,14 +4,17 @@
 #include <vector>
 #include <fstream>
 #include <iostream>
+#include <random>
 
 using namespace std;
 
-ofstream Out;
+ofstream OutX, OutY, OutPX, OutPY, OutT;
 
-const double Period = 1.;
-const int NumberOfVariables = 4;
+const double Period = 20.0;
+const int NumberOfVariables = 5;
 const int NumberOfStadies = 13;
+double NonZeroXDerDet;
+int PreviousBranch = -2, CurrentBranch = -2;
 
 const double Tol(1.e-12);
 const double Fac(0.8);
@@ -55,35 +58,50 @@ double Module(vector<double> &arr) {
     return sqrt(res);
 }
 
-double Max(vector<double>& arr) {
+double Max(vector<double> &arr) {
     double max = arr[0];
     for (int i = 1; i < arr.size(); ++i) {
         if (arr[i] > max) {
             max = arr[i];
         }
     }
+
     return max;
 }
 
 double FuncX(double t, vector<double> &variables) {
-    // return variables[1];
     return variables[1];
 }
 
 double FuncY(double t, vector<double> &variables) {
-    // return fabs(variables[3]) > 1 ? (variables[3] >= 1 ? 1 : -1) : variables[3];
-    return variables[3];
-    // return - variables[0];
+    double toReturn;
+    if (fabs(variables[3]) > 1) {
+        if (variables[3] > 1) {
+            toReturn = 1;
+            CurrentBranch = 1;
+        } else {
+            toReturn = -1;
+            CurrentBranch = -1;
+        }
+    } else {
+        toReturn = variables[3];
+        CurrentBranch = 0;
+    }
+
+    return toReturn;
 }
 
 double FuncPx(double t, vector<double> &variables) {
-    // return variables[1];
     return - variables[0];
 }
 
 double FuncPy(double t, vector<double> &variables) {
     return - variables[2] - variables[1];
-    // return - variables[0];
+}
+
+double FuncB(double t, vector<double> &variables) {
+    double u = fabs(variables[3]) > 1 ? (variables[3] > 1 ? 1 : -1) : variables[3];
+    return u * u - variables[1] * variables[1] - variables[0] * variables[0];
 }
 
 double Func(double t, vector<double> &variables, int var) {
@@ -96,12 +114,13 @@ double Func(double t, vector<double> &variables, int var) {
         return FuncPx(t, variables);
     case 3 :
         return FuncPy(t, variables);
+    case 4 :
+        return FuncB(t, variables);
     }
-
     return -1;
 }
 
-double FindLinearCombinationForA(int matrixIndex, int var, vector<vector<double>>& k) {
+double FindLinearCombinationForA(int matrixIndex, int var, vector<vector<double>> &k) {
     double lc = 0.;
     for (int j = 0; j < A[matrixIndex].size(); ++j) {
         lc += A[matrixIndex][j] * k[var][j];
@@ -110,45 +129,44 @@ double FindLinearCombinationForA(int matrixIndex, int var, vector<vector<double>
     return lc;
 }
 
+vector<double> ShiftVariables(vector<double> &variables, double h, int stage, vector<vector<double>> &k) {
+    vector<double> variablesWithShift(NumberOfVariables);
+    for (int var = 0; var < NumberOfVariables; ++var) {
+        variablesWithShift[var] = variables[var] + h * FindLinearCombinationForA(stage, var, k);
+    }
+
+    return variablesWithShift;
+}
+
 void UpdateLowVariables(vector<double> &variables, vector<vector<double>> &k, double h) {
-    for (int i = 0; i < NumberOfVariables; ++i) {
+    for (int var = 0; var < NumberOfVariables; ++var) {
         double lc = 0.;
         for (int j = 0; j < LowB.size(); ++j) {
-            lc += LowB[j] * k[i][j];
+            lc += LowB[j] * k[var][j];
         }
 
-        variables[i] += lc * h;
+        variables[var] += lc * h;
     }
 }
 
 void UpdateVariables(vector<double> &variables, vector<vector<double>> &k, double h) {
-    for (int i = 0; i < NumberOfVariables; ++i) {
+    for (int var = 0; var < NumberOfVariables; ++var) {
         double lc = 0.;
         for (int j = 0; j < B.size(); ++j) {
-            lc += B[j] * k[i][j];
+            lc += B[j] * k[var][j];
         }
 
-        variables[i] += lc * h;
+        variables[var] += lc * h;
     }
 }
 
 vector<vector<double>> FindK(double t, vector<double> &variables, double h) {
-    vector<vector<double>> k(4);
-    for (int i = 0; i < NumberOfStadies; ++i) {
-        for (int j = 0; j < NumberOfVariables; ++j) {
-            double tShift = t + C[i] * h;
-            vector<double> variablesWithShift = {
-                variables[0] + h * FindLinearCombinationForA(i, 0, k), 
-                variables[1] + h * FindLinearCombinationForA(i, 1, k), 
-                variables[2] + h * FindLinearCombinationForA(i, 2, k),
-                variables[3] + h * FindLinearCombinationForA(i, 3, k)
-            };
-            k[j].push_back(Func(tShift, variablesWithShift, j));
-            /* cout << j << " ";
-            for (int i = 0; i < k[j].size(); ++i) {
-                cout << k[j][i] << " ";
-            } 
-            cout << endl; */
+    vector<vector<double>> k(NumberOfVariables);
+    for (int stage = 0; stage < NumberOfStadies; ++stage) {
+        for (int var = 0; var < NumberOfVariables; ++var) {
+            double tShift = t + C[stage] * h;
+            vector<double> variablesWithShift = ShiftVariables(variables, h, stage, k);
+            k[var].push_back(Func(tShift, variablesWithShift, var));
         }
     }
     UpdateLowVariables(variables, k, h);
@@ -160,18 +178,16 @@ double StepChoice(double t, vector<double> &variables, double &currH) {
     for (;;) {
         vector<double> variablesCopy = variables;
         vector<double> wVariables = variables; 
-        vector<vector<double>> k(4);
+        vector<vector<double>> k(NumberOfVariables);
         k = FindK(t, variablesCopy, h);
         UpdateVariables(wVariables, k, h);
-        vector<double> d = {
-            fabs(variablesCopy[0] - wVariables[0]),
-            fabs(variablesCopy[1] - wVariables[1]),
-            fabs(variablesCopy[2] - wVariables[2]),
-            fabs(variablesCopy[3] - wVariables[3]),
-        };
+        vector<double> d(NumberOfVariables - 1); 
+        /// NumberOfVariables - 1 because last var is a functional 
+        for (int var = 0; var < NumberOfVariables - 1; ++var) {
+            d[var] = fabs(variablesCopy[var] - wVariables[var]);
+        }
         double err = Max(d);
         currH = h;
-        // cout << t << " ";
         h *= min(Facmax, max(Facmin, Fac * pow((Tol / err), 1. / 9)));
         if (err <= Tol) {
             variables = variablesCopy;
@@ -183,47 +199,43 @@ double StepChoice(double t, vector<double> &variables, double &currH) {
     }
 }
 
-pair<vector<double>, vector<double>> MainLoopRK(vector<double> variablesInitialConditions = {0., 0., 1., 0.00001}) {
-    int draw = 0;
-    ofstream out1, out2, out3;
-    out1.open("auto_rk1.txt");
-    out2.open("auto_rk2.txt");
-    out3.open("auto_rk3.txt");
+pair<vector<double>, vector<double>> MainLoopAutoRK(vector<double> variablesInitialConditions = {0., 0., 1., 0.00001}) {
+    int draw = 0, previousBranch = -2;
     vector<double> variables = variablesInitialConditions;
-    double nextH = 0.01, currH = 0.01;
+    double nextH = 1.e-1, currH = 1.e-1;
     double T = 0.;
     for (; 1.e-13 <= Period - T; T += currH) {
         currH = nextH;
         if (!(draw % 1)) {
-            Out << T << " " << variables[0] << endl;
-            out1 << T << " " << variables[1] << endl;
-            out2 << T << " " << variables[2] << endl;
-            out3 << T << " " << variables[3] << endl;
+            OutX << T << " " << variables[0] << endl;
+            OutY << T << " " << variables[1] << " " << T << endl;
+            OutPX << T << " " << variables[2] << endl;
+            OutPY << T << " " << variables[3] << endl;
+            OutT << T << endl;
         }
         nextH = StepChoice(T, variables, currH);
         draw++;
+        if (CurrentBranch != PreviousBranch && PreviousBranch != -2) {
+            cout.precision(16);
+            cout << "Control changed. T:" << T << " h:" << currH << endl;
+        }
+        PreviousBranch = CurrentBranch;
     }
-    Out << T << " " << variables[0] << endl;
-    out1 << T << " " << variables[1] << endl;
-    out2 << T << " " << variables[2] << endl;
-    out3 << T << " " << variables[3] << endl;
-    // cout.precision(16);
-    // cout << variables[0] - sin(T) << endl;
-    // cout << variables[1] - cos(T) << endl;
-    // cout << variables[2] - sin(T) << endl;
-    // cout << variables[3] - cos(T) << endl;
-    out1.close();
-    out2.close();
-    out3.close();
-    // cout << draw << endl;
+
+    OutX << variables[0] << endl;
+    OutY << variables[1] << endl;
+    OutPX << variables[2] << endl;
+    OutPY << variables[3] << endl;
+    OutT << T << endl;
+    cout << "Functional: " << variables.back() << endl;
     return {variablesInitialConditions, variables};
 }
 
 vector<vector<double>> FindDerivativeAndInverse(const vector<double> &X, const vector<double> &alpha) {
-    // const pair<vector<double>, vector<double>> RKWithShift =  MainLoopRK({0., 0., alpha[0], alpha[1]});
-    const pair<vector<double>, vector<double>> RKWithShiftX =  MainLoopRK({0., 0., alpha[0] + 1.e-8, alpha[1]});
-    const pair<vector<double>, vector<double>> RKWithShiftY =  MainLoopRK({0., 0., alpha[0], alpha[1] + 1.e-8});
-    cout << "Compare: " << X[0] - RKWithShiftY.second[0] << " " << X[1] - (RKWithShiftY.second[3]) << endl;
+    // const pair<vector<double>, vector<double>> RKWithShift =  MainLoopAutoRK({0., 0., alpha[0], alpha[1]});
+    const pair<vector<double>, vector<double>> RKWithShiftX =  MainLoopAutoRK({0., 0., alpha[0] + 1.e-8, alpha[1], 0.});
+    const pair<vector<double>, vector<double>> RKWithShiftY =  MainLoopAutoRK({0., 0., alpha[0], alpha[1] + 1.e-8, 0.});
+    // cout << "Compare: " << X[0] - RKWithShiftY.second[0] << " " << X[1] - RKWithShiftY.second[3] << endl;
     // cout << RKWithShiftX.first[0] << " " << RKWithShiftX.first[1] << endl;
     const vector<double> withShiftX = {
         RKWithShiftX.second[0]/* - RKWithShiftX.first[0]*/, 
@@ -244,7 +256,14 @@ vector<vector<double>> FindDerivativeAndInverse(const vector<double> &X, const v
         }
     };
     double XDerDet = (XDer[0][0] * XDer[1][1] - XDer[0][1] * XDer[1][0]);
-    cout << "DerInv: " << XDer[1][1] / XDerDet << " " << - XDer[0][1] / XDerDet << " " << - XDer[1][0] / XDerDet << " " << XDer[0][0] / XDerDet << endl;
+
+    if (XDerDet != 0) {
+        NonZeroXDerDet = XDerDet;
+    } else {
+        XDerDet = NonZeroXDerDet;
+    }
+
+    // cout << "DerInv: " << XDer[1][1] / XDerDet << " " << - XDer[0][1] / XDerDet << " " << - XDer[1][0] / XDerDet << " " << XDer[0][0] / XDerDet << endl;
     return {
         {
             XDer[1][1] / XDerDet, 
@@ -257,19 +276,23 @@ vector<vector<double>> FindDerivativeAndInverse(const vector<double> &X, const v
     };
 }
 
-void Shooting(const vector<double> &a) {
-    int counter = 0;
+int Shooting(const vector<double> &a) {
+    int counterGamma = 0;
     bool firstStep = true;
     vector<double> alpha = a, alphaNew = a, X, XPrev;
     vector<vector<double>> XDerivativeInversed = {{0., 0.,}, {0., 0.}};
     double gamma = 1.;
 
-    pair<vector<double>, vector<double>> resultRK = MainLoopRK({0., 0., a[0], a[1]});
+    pair<vector<double>, vector<double>> resultRK = MainLoopAutoRK({0., 0., a[0], a[1], 0.});
     X = {resultRK.second[0]/* - resultRK.first[0]*/, resultRK.second[3]};
+    cout << "X: " << X[0] << " " << X[1] << endl;
+    // Out << Module(X) << endl;
 
+    // return;
+    int counterRKIterations = 0;
     do {
 
-        if (counter > 30) {
+        if (counterGamma > 30) {
             cout << endl << "-----------------------------------------" << endl;
             cout << "Bad initial conditions or smth went wrong" << endl;
             cout << "-----------------------------------------" << endl;
@@ -280,35 +303,72 @@ void Shooting(const vector<double> &a) {
             cout << "X: " << X[0] << " " << X[1] << endl;
             alphaNew[0] = alpha[0] - gamma * (XDerivativeInversed[0][0] * X[0] + XDerivativeInversed[0][1] * X[1]);
             alphaNew[1] = alpha[1] - gamma * (XDerivativeInversed[1][0] * X[0] + XDerivativeInversed[1][1] * X[1]);
-            pair<vector<double>, vector<double>> resultRK = MainLoopRK({0., 0., alphaNew[0], alphaNew[1]});
+            pair<vector<double>, vector<double>> resultRK = MainLoopAutoRK({0., 0., alphaNew[0], alphaNew[1], 0.});
             X = {resultRK.second[0]/* - resultRK.first[0]*/, resultRK.second[3]};
         }
         XDerivativeInversed = FindDerivativeAndInverse(X, alphaNew);
         if (XPrev.size() > 0 && Module(X) > Module(XPrev)) {
             gamma /= 2;
-            counter++;
+            counterGamma++;
         } else {
             XPrev = X;
             gamma = 1.;
             alpha = alphaNew;
-            counter = 0;
+            counterGamma = 0;
         }
         firstStep = false;
-        cout << "alpha 1: " << alphaNew[0] << " alpha 2: " << alphaNew[1] << endl;
-        cout << "Module: " << Module(X) << " " << Module(XPrev) << " " << gamma << endl;
-    } while (Module(X) > 1.e-8);
+        counterRKIterations++;
+        // cout << "alpha 1: " << alphaNew[0] << " alpha 2: " << alphaNew[1] << endl;
+        // Out << "Module: " << Module(X) << " " << Module(XPrev) << " " << gamma << endl;
+    } while (Module(X) > 1.e-8 && counterRKIterations < 500);
+
+    if (Module(X) < 1.e-8) {
+        cout.precision(16);
+        cout << "Converge to " << alphaNew[0] << " " << alphaNew[1];
+        return 1;
+    }
+
+    return 0;
+}
+
+void FindSomeInitialConditionToConverge() {
+    double leftAlpha0 = -5000, rightAlpha0 = 5000;
+    double leftAlpha1 = -5000, rightAlpha1 = 5000;
+    random_device rd1, rd2;
+    mt19937 gen1(rd1()), gen2(rd2());
+    uniform_real_distribution<> dis1(leftAlpha0, rightAlpha0);
+    uniform_real_distribution<> dis2(leftAlpha1, rightAlpha1);
+    for (auto i = 0; i < 500; ++i) {
+        auto alpha0 = dis1(gen1);
+        auto alpha1 = dis2(gen2);
+        int res = Shooting({alpha0, alpha1});
+        if (res) {
+            cout << " with initial conditions : " << alpha0 << " " << alpha1 << endl;
+        }
+    }
+}
+
+void OpenFilesToInsert() {
+    OutX.open("X.txt");
+    OutY.open("Y.txt");
+    OutPX.open("PX.txt");
+    OutPY.open("PY.txt");
+    OutT.open("T.txt");
+}
+
+void CloseFiles() {
+    OutX.close();
+    OutY.close();
+    OutPX.close();
+    OutPY.close();
+    OutX.close();
 }
 
 int main() {
-    Out.open("auto_rk.txt");
-    
-    Shooting({10., -30.});
-    // MainLoopRK({0., -0.52965891711207, -2.83452801327367, 0.});
-    // MainLoopRK({0., 1., 0., 1.});
-    Out.close();
-    
-    cout << endl << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" << endl;
-    cout << "Fine." << endl;
-    cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" << endl;
+    OpenFilesToInsert();
+    // FindSomeInitialConditionToConverge();
+    // Shooting({-233.4461948624531, -1335.591291777942});
+    MainLoopAutoRK({0., 0., -233.4461948624531, -1335.591291777942, 0.});
+    CloseFiles();
     return 0;
 }
